@@ -1,4 +1,4 @@
-const CACHE_NAME = 'qarz-v1';
+const CACHE_NAME = 'qarz-v2';
 const ASSETS = [
   'index.html',
   'manifest.json',
