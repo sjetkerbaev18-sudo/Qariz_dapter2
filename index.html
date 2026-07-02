@@ -1,18 +1,15 @@
 <!DOCTYPE html>
 <html lang="kk">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Magazin Qarzı</title>
-
 <link rel="manifest" href="manifest.json">
 <script>
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-      navigator.serviceWorker.register('sw.js');
-    });
+    navigator.serviceWorker.register('sw.js');
   }
 </script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Magazin Qarzı</title>
 <style>
   :root {
     --navy: #0a1628;
@@ -202,6 +199,7 @@
   </div>
 </div>
 
+<!-- VIEW 1: MAIN -->
 <div id="mainView" class="view active">
   <div class="stat-row" id="statRow"></div>
   <div class="search-wrap">
@@ -212,6 +210,7 @@
   <button class="fab" onclick="showView('addClientView')">＋</button>
 </div>
 
+<!-- VIEW 2: ADD CLIENT -->
 <div id="addClientView" class="view">
   <div class="form-section">
     <label class="form-label">Adam atı *</label>
@@ -226,6 +225,7 @@
   <button class="btn-primary" onclick="saveClient()">✓ Adamdı qosiw</button>
 </div>
 
+<!-- VIEW 3: DETAIL -->
 <div id="detailView" class="view">
   <div class="debt-banner" id="debtBanner"></div>
   <div class="trx-list-title">Tarix</div>
@@ -380,4 +380,97 @@ function renderBanner() {
 }
 
 function renderTrx() {
-  var trxs = DB.trx.filter
+  var trxs = DB.trx.filter(function(t){ return t.clientId === curClientId; }).sort(function(a,b){ return b.date - a.date; });
+  var el = document.getElementById('trxList');
+  if (!trxs.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px 0">Hazirshe operaciya joq</div>';
+    return;
+  }
+  el.innerHTML = trxs.map(function(t) {
+    var isAdd = t.type === 'qosildi';
+    return '<div class="trx-item">' +
+      '<div class="trx-dot ' + (isAdd?'plus':'minus') + '">' + (isAdd?'📈':'✅') + '</div>' +
+      '<div class="trx-body">' +
+        '<div class="trx-type">' + (t.note || (isAdd ? 'Qarz alındı' : 'Qarz tólendi')) + '</div>' +
+        '<div class="trx-date">' + dateStr(t.date) + '</div>' +
+      '</div>' +
+      '<div class="trx-amt ' + (isAdd?'plus':'minus') + '">' + (isAdd?'+':'-') + fmt(t.amount) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function setTab(tab) {
+  curTab = tab;
+  document.getElementById('tabAdd').className = 'action-tab' + (tab==='add' ? ' active add' : '');
+  document.getElementById('tabPay').className = 'action-tab' + (tab==='pay' ? ' active pay' : '');
+  var btn = document.getElementById('confirmBtn');
+  if (tab === 'add') { btn.className = 'confirm-btn add'; btn.innerText = '➕ Qarz qosıw'; }
+  else               { btn.className = 'confirm-btn pay'; btn.innerText = '✅ Qarz óshiriw'; }
+}
+
+function addQuick(val) {
+  var inp = document.getElementById('debtInput');
+  inp.value = (parseInt(inp.value)||0) + val;
+}
+
+function doTransaction() {
+  var amount = parseInt(document.getElementById('debtInput').value);
+  if (!amount || amount <= 0) { toast('❗ Durıs summa kiritiń!'); return; }
+  var c = getClient(curClientId);
+  if (curTab === 'pay' && amount > c.totalDebt) { toast('⚠️ Qarz muqdarınan kóp!'); return; }
+  DB.trx.push({ id: Date.now(), clientId: curClientId, amount: amount, type: curTab==='add'?'qosildi':'oshirildi', date: Date.now() });
+  if (curTab === 'add') c.totalDebt += amount;
+  else c.totalDebt -= amount;
+  c.lastAccessed = Date.now();
+  saveDB();
+  document.getElementById('debtInput').value = '';
+  toast(curTab==='add' ? '📈 +' + fmt(amount) + ' qosildi' : '✅ -' + fmt(amount) + ' óshirildi');
+  renderBanner(); renderTrx();
+}
+
+function askDelete() {
+  var c = getClient(curClientId);
+  document.getElementById('deleteModalMsg').innerHTML = '<b>' + c.name + '</b> hám onıń barı tarixı óshiriledi. Qaytarılmaydi. Dawam etesiźbe?';
+  deleteTarget = curClientId;
+  document.getElementById('deleteModal').classList.add('open');
+}
+function closeModal() { document.getElementById('deleteModal').classList.remove('open'); deleteTarget = null; }
+function confirmDelete() {
+  DB.clients = DB.clients.filter(function(c){ return c.id !== deleteTarget; });
+  DB.trx = DB.trx.filter(function(t){ return t.clientId !== deleteTarget; });
+  saveDB(); closeModal();
+  toast('🗑 Adam óshirildi');
+  showView('mainView');
+}
+
+function exportData() {
+  var withDebt = DB.clients.filter(function(c){ return c.totalDebt > 0; }).sort(function(a,b){ return b.totalDebt - a.totalDebt; });
+  if (!withDebt.length) { toast('Qarzı bar adam joq 🎉'); return; }
+  var text = '📋 MAGAZIN QARZ DIZIMI\n📅 ' + new Date().toLocaleDateString('ru-RU') + '\n──────────────────────\n';
+  var total = 0;
+  withDebt.forEach(function(c, i) {
+    text += (i+1) + '. ' + c.name;
+    if (c.phone) text += ' | ' + c.phone;
+    text += '\n   💰 ' + fmt(c.totalDebt) + '\n';
+    total += c.totalDebt;
+  });
+  text += '──────────────────────\n💸 Jámı: ' + fmt(total);
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(function(){ toast("📋 Kópirlenip alındı! Telegram'ga jóberiń."); }).catch(function(){ fallbackCopy(text); });
+  } else { fallbackCopy(text); }
+}
+
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch(e){}
+  document.body.removeChild(ta);
+  toast("📋 Kópirlenip alındı! Telegram'ga jóberiń.");
+}
+
+renderStats();
+renderClients();
+</script>
+</body>
+</html>
